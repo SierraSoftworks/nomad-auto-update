@@ -141,8 +141,9 @@ func (c *nomadClient) statusError(method, path string, resp *http.Response) erro
 	msg := fmt.Sprintf("%s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(body)))
 	if resp.StatusCode == http.StatusForbidden {
 		return humane.New(msg,
-			"With ACLs enabled, the service's workload identity needs a policy granting list-jobs, read-job, and submit-job across the namespaces it manages.",
-			`Apply it with: nomad acl policy apply -namespace default -job nomad-auto-update nomad-auto-update policy.hcl — see the README.`,
+			"With ACLs enabled, the service's workload identity needs a namespace policy granting list-jobs, read-job, parse-job, and submit-job across the namespaces it manages.",
+			"A 403 on /v1/jobs/parse specifically means parse-job (or submit-job) is missing; a 403 on /v1/job/:id means submit-job is missing.",
+			`Apply the policy with: nomad acl policy apply -namespace default -job nomad-auto-update nomad-auto-update policy.hcl — see the README.`,
 		)
 	}
 	return humane.New(msg)

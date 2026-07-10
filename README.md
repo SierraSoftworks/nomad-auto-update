@@ -108,9 +108,15 @@ granting it the access it needs across the namespaces it manages:
 ```hcl
 # nomad-auto-update-policy.hcl
 namespace "*" {
-  capabilities = ["list-jobs", "read-job", "submit-job"]
+  capabilities = ["list-jobs", "read-job", "parse-job", "submit-job"]
 }
 ```
+
+Each capability covers part of the update flow: `list-jobs` and `read-job` for
+discovery and reading a job's submission, `parse-job` for re-rendering the HCL
+with the new variables (`/v1/jobs/parse`), and `submit-job` for registering the
+new version. Without `parse-job`, discovery works but updates fail with a 403 at
+the parse step on Nomad versions that require it.
 
 ```sh
 nomad acl policy apply \
