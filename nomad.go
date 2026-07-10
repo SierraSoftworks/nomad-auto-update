@@ -141,11 +141,29 @@ func (c *nomadClient) statusError(method, path string, resp *http.Response) erro
 	msg := fmt.Sprintf("%s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(body)))
 	if resp.StatusCode == http.StatusForbidden {
 		return humane.New(msg,
-			"With ACLs enabled, the service's workload identity needs a policy granting list-jobs, read-job, and submit-job across the namespaces it manages.",
-			`Apply it with: nomad acl policy apply -namespace default -job nomad-auto-update nomad-auto-update policy.hcl — see the README.`,
+			requiredCapabilityHint(method, path),
+			`Grant it in the workload identity's namespace policy: capabilities = ["list-jobs", "read-job", "parse-job", "submit-job"].`,
+			`Apply the policy with: nomad acl policy apply -namespace default -job nomad-auto-update nomad-auto-update policy.hcl — see the README.`,
 		)
 	}
 	return humane.New(msg)
+}
+
+// requiredCapabilityHint maps a denied request to the specific Nomad ACL
+// capability it needs, so a 403 points straight at the missing grant instead of
+// the whole policy. Reads need read-job/list-jobs; the parse (re-render) step
+// needs parse-job; registering the new version needs submit-job.
+func requiredCapabilityHint(method, path string) string {
+	switch {
+	case method == http.MethodGet && path == "/v1/jobs":
+		return "Discovering jobs (GET /v1/jobs) needs the list-jobs capability on the scanned namespaces."
+	case method == http.MethodGet:
+		return fmt.Sprintf("Reading a job (%s %s) needs the read-job capability on the job's namespace.", method, path)
+	case path == "/v1/jobs/parse":
+		return "Re-rendering the HCL (POST /v1/jobs/parse) needs the parse-job capability (or submit-job) on the job's namespace."
+	default:
+		return fmt.Sprintf("Registering the updated job (%s %s) needs the submit-job capability on the job's namespace; if the job mounts a host volume it also needs a host_volume policy block granting mount-readwrite (CSI volumes need csi-mount-volume plus plugin read).", method, path)
+	}
 }
 
 // nomadRoute maps a request path to a low-cardinality route template for use

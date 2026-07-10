@@ -6,7 +6,7 @@
 # The coordinator reaches the local Nomad agent through the task API socket
 # using its own workload identity, so no API address or token needs to be
 # configured. With ACLs enabled, attach a policy granting list-jobs, read-job,
-# and submit-job across the namespaces it manages (see the README).
+# parse-job, and submit-job across the namespaces it manages (see the README).
 
 # The release to install, e.g.:
 #

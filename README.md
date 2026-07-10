@@ -107,9 +107,29 @@ granting it the access it needs across the namespaces it manages:
 
 ```hcl
 # nomad-auto-update-policy.hcl
+
 namespace "*" {
-  capabilities = ["list-jobs", "read-job", "submit-job"]
+  # Core update flow (always required):
+  #   list-jobs / read-job -> discover jobs and read each job's source + submission
+  #   parse-job            -> re-render the HCL with the new variables (/v1/jobs/parse)
+  #   submit-job           -> register the updated version (POST /v1/job/:id)
+  # Also add "csi-mount-volume" if any managed job mounts a CSI volume,
+  # and "csi-register-plugin" if any managed job runs a CSI plugin (csi_plugin stanza).
+  capabilities = ["list-jobs", "read-job", "parse-job", "submit-job"]
 }
+
+# Required only if a managed job mounts a host volume (e.g. persistent app data).
+# Scope the name down to specific volumes for least privilege, and use
+# "mount-readonly" if every mount is read-only. Volume mount permissions are NOT
+# covered by namespace capabilities.
+host_volume "*" {
+  capabilities = ["mount-readwrite"]
+}
+
+# Required only if a managed job mounts a CSI volume (pairs with csi-mount-volume above).
+# plugin {
+#   policy = "read"
+# }
 ```
 
 ```sh
@@ -119,6 +139,35 @@ nomad acl policy apply \
 ```
 
 Skip this step entirely if your cluster does not use ACLs.
+
+#### Capabilities the coordinator may need
+
+The core namespace capabilities cover most jobs. Depending on what a managed job
+declares, Nomad's registration checks a few extra grants — reads and parsing
+succeed without them, but registration fails with a 403 on `POST /v1/job/:id`:
+
+| Managed job uses… | Grant | Where |
+| --- | --- | --- |
+| A host volume | `mount-readwrite` (or `mount-readonly`) | `host_volume "<name>"` block |
+| A CSI volume | `csi-mount-volume` **and** `policy = "read"` | `namespace` block **and** top-level `plugin` block |
+| A CSI plugin (`csi_plugin` stanza) | `csi-register-plugin` | `namespace` block |
+
+#### Requirements a policy can't satisfy
+
+A few registration requirements aren't ACL capabilities, so no grant resolves them:
+
+- **Consul services with `consul.allow_unauthenticated = false`** — Nomad
+  validates the job-submitter's Consul token at register time, and the coordinator
+  re-submits without one. Clusters on the default (`allow_unauthenticated = true`)
+  or using Consul-via-workload-identity (Nomad 1.7+) are unaffected.
+- **Vault in static-token mode** — same shape; workload-identity Vault (the modern
+  default) is fine.
+- **Hard-mandatory Sentinel policies** (Enterprise) — the coordinator never requests
+  `PolicyOverride`, so a hard-mandatory policy blocks the update.
+
+The coordinator does **not** need Nomad Variables or node-pool capabilities: a
+job's own workload identity gets its `nomad/jobs/...` variable access at runtime,
+and node pools aren't checked on the register path.
 
 ## Observability
 

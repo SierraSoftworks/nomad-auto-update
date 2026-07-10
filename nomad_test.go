@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -38,5 +39,28 @@ func TestJobSubmissionReadsCurrentVersion(t *testing.T) {
 	}
 	if sub == nil || sub.VariableFlags["grey_version"] != "v5" {
 		t.Fatalf("submission = %+v", sub)
+	}
+}
+
+// TestRequiredCapabilityHint pins each request in the update flow to the
+// specific ACL capability a 403 implicates, so the error points at the missing
+// grant rather than the whole policy.
+func TestRequiredCapabilityHint(t *testing.T) {
+	cases := []struct {
+		method, path string
+		want         string
+	}{
+		{http.MethodGet, "/v1/jobs", "list-jobs"},
+		{http.MethodGet, "/v1/job/grey", "read-job"},
+		{http.MethodGet, "/v1/job/grey/submission", "read-job"},
+		{http.MethodGet, "/v1/job/grey/deployment", "read-job"},
+		{http.MethodPost, "/v1/jobs/parse", "parse-job"},
+		{http.MethodPost, "/v1/job/grey", "submit-job"},
+	}
+	for _, tc := range cases {
+		got := requiredCapabilityHint(tc.method, tc.path)
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("requiredCapabilityHint(%q, %q) = %q, want it to name %q", tc.method, tc.path, got, tc.want)
+		}
 	}
 }
