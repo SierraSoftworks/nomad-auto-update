@@ -45,6 +45,7 @@ func run() int {
 		discoverEvery   = flag.Duration("interval", 5*time.Minute, "how often to rescan Nomad for jobs to manage")
 		defaultInterval = flag.Duration("default-check-interval", time.Hour, "default per-job check interval when the job sets no autoupdate.interval meta")
 		concurrency     = flag.Int("concurrency", 4, "maximum number of jobs checked concurrently")
+		cacheFile       = flag.String("cache-file", "", "path to persist applied-version state across restarts (default: $NOMAD_ALLOC_DIR/data/applied-versions.json inside a Nomad task, else disabled)")
 		once            = flag.Bool("once", false, "run a single discovery and check pass, then exit")
 		dryRun          = flag.Bool("dry-run", false, "log the updates that would be applied without registering any job")
 		showVersion     = flag.Bool("version", false, "print the version and exit")
@@ -76,7 +77,14 @@ func run() int {
 
 	addr := resolveNomadAddr(*nomadAddr)
 	nomad := newNomadClient(addr, os.Getenv("NOMAD_TOKEN"), *namespace, *metaPrefix)
-	up := newUpdater(nomad, *dryRun)
+
+	cachePath := resolveCachePath(*cacheFile)
+	cache := newVersionCache(cachePath)
+	if err := cache.Load(); err != nil {
+		log(ctx).Warn("could not load the version cache; starting fresh", humane.Zap(err)...)
+	}
+
+	up := newUpdater(nomad, *dryRun, cache)
 	sched := newScheduler(up, nomad, *discoverEvery, *defaultInterval, *concurrency)
 
 	log(ctx).Info("starting nomad-auto-update",
@@ -85,6 +93,7 @@ func run() int {
 		zap.String("namespace", *namespace),
 		zap.String("meta_prefix", *metaPrefix),
 		zap.Duration("default_interval", *defaultInterval),
+		zap.String("cache_file", cachePath),
 		zap.Bool("dry_run", *dryRun),
 	)
 
@@ -115,4 +124,17 @@ func resolveNomadAddr(flagVal string) string {
 		}
 	}
 	return "http://127.0.0.1:4646"
+}
+
+// resolveCachePath picks where to persist applied-version state: the explicit
+// flag, then the Nomad allocation's ephemeral disk when running inside a task,
+// otherwise empty (persistence disabled).
+func resolveCachePath(flagVal string) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	if dir := os.Getenv("NOMAD_ALLOC_DIR"); dir != "" {
+		return filepath.Join(dir, "data", "applied-versions.json")
+	}
+	return ""
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -102,7 +103,9 @@ func greyManagedJob() managedJob {
 }
 
 func greyUpdater(nomad nomadAPI) *updater {
-	return &updater{nomad: nomad, newSource: staticSources(map[string]string{"github:o/grey": "v2.2.0"})}
+	u := newUpdater(nomad, false, newVersionCache(""))
+	u.newSource = staticSources(map[string]string{"github:o/grey": "v2.2.0"})
+	return u
 }
 
 func TestUpdaterAppliesChange(t *testing.T) {
@@ -221,9 +224,8 @@ func TestUpdaterDryRunDoesNotRegister(t *testing.T) {
 
 func TestUpdaterReportsSourceErrorWhenNoChange(t *testing.T) {
 	nomad := greyJob("v2.1.0")
-	u := &updater{nomad: nomad, newSource: func(string) (Source, humane.Error) {
-		return &errSource{}, nil
-	}}
+	u := newUpdater(nomad, false, newVersionCache(""))
+	u.newSource = func(string) (Source, humane.Error) { return &errSource{}, nil }
 
 	updated, err := u.check(context.Background(), greyManagedJob())
 	if err == nil {
@@ -234,7 +236,104 @@ func TestUpdaterReportsSourceErrorWhenNoChange(t *testing.T) {
 	}
 }
 
+func TestUpdaterSkipsAlreadyAppliedVersionAfterRevert(t *testing.T) {
+	nomad := greyJob("v2.1.0")
+	u := greyUpdater(nomad)
+
+	// First check applies v2.2.0.
+	updated, err := u.check(context.Background(), greyManagedJob())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated || len(nomad.registered) != 1 {
+		t.Fatalf("first check: updated=%v registrations=%d", updated, len(nomad.registered))
+	}
+
+	// The fake submission still reports v2.1.0, simulating a Nomad auto-revert
+	// after a failed deployment. The updater must not push v2.2.0 again.
+	updated, err = u.check(context.Background(), greyManagedJob())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated || len(nomad.registered) != 1 {
+		t.Fatalf("second check re-applied a reverted version: updated=%v registrations=%d", updated, len(nomad.registered))
+	}
+}
+
+func TestUpdaterAppliesNewerVersionAfterRevert(t *testing.T) {
+	nomad := greyJob("v2.1.0")
+	val := "v2.2.0"
+	u := newUpdater(nomad, false, newVersionCache(""))
+	u.newSource = func(string) (Source, humane.Error) { return mutableSource{&val}, nil }
+
+	// Apply v2.2.0, which then "reverts" (the fake submission stays at v2.1.0),
+	// so a repeat check of the same version is suppressed.
+	if _, err := u.check(context.Background(), greyManagedJob()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.check(context.Background(), greyManagedJob()); err != nil {
+		t.Fatal(err)
+	}
+	if len(nomad.registered) != 1 {
+		t.Fatalf("expected the reverted version to be suppressed, got %d registrations", len(nomad.registered))
+	}
+
+	// A newer release must still be applied.
+	val = "v2.3.0"
+	updated, err := u.check(context.Background(), greyManagedJob())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated || len(nomad.registered) != 2 {
+		t.Fatalf("newer version not applied: updated=%v registrations=%d", updated, len(nomad.registered))
+	}
+	if nomad.registered[1].sub.VariableFlags["grey_version"] != "v2.3.0" {
+		t.Fatalf("expected grey_version=v2.3.0, got %v", nomad.registered[1].sub.VariableFlags)
+	}
+}
+
+func TestUpdaterPersistsAppliedVersionAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "applied-versions.json")
+
+	// First "process": apply v2.2.0, persisting the cache to disk.
+	nomad1 := greyJob("v2.1.0")
+	cache1 := newVersionCache(path)
+	if err := cache1.Load(); err != nil {
+		t.Fatal(err)
+	}
+	u1 := newUpdater(nomad1, false, cache1)
+	u1.newSource = staticSources(map[string]string{"github:o/grey": "v2.2.0"})
+	if updated, err := u1.check(context.Background(), greyManagedJob()); err != nil || !updated {
+		t.Fatalf("first apply: updated=%v err=%v", updated, err)
+	}
+
+	// Second "process": a fresh updater loading the persisted cache. The job
+	// has reverted (submission back at v2.1.0), so the update must be
+	// suppressed just as it would be within a single process.
+	nomad2 := greyJob("v2.1.0")
+	cache2 := newVersionCache(path)
+	if err := cache2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	u2 := newUpdater(nomad2, false, cache2)
+	u2.newSource = staticSources(map[string]string{"github:o/grey": "v2.2.0"})
+
+	updated, err := u2.check(context.Background(), greyManagedJob())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated || len(nomad2.registered) != 0 {
+		t.Fatalf("reverted version re-applied after restart: updated=%v registrations=%d", updated, len(nomad2.registered))
+	}
+}
+
 type errSource struct{}
 
 func (errSource) Latest(context.Context) (string, error) { return "", errors.New("boom") }
 func (errSource) scheme() string                         { return "fake" }
+
+// mutableSource resolves to a value the test can change between checks.
+type mutableSource struct{ value *string }
+
+func (m mutableSource) Latest(context.Context) (string, error) { return *m.value, nil }
+func (m mutableSource) scheme() string                         { return "fake" }

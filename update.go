@@ -29,17 +29,26 @@ type nomadAPI interface {
 // updater performs a single check-and-update pass for one job: read its
 // submission, resolve each declared source, and — when a value changed —
 // re-render the job's HCL with the new variables and register a new version.
+//
+// It consults a versionCache of the values it has applied per job variable. If
+// Nomad auto-reverts a failed deployment, the job's variable returns to its old
+// value while the source still reports the newer version; the cache lets the
+// updater recognise a version it already applied and avoid pushing it again in
+// a loop. The cache is persisted (see versionCache), so this holds across
+// restarts.
 type updater struct {
 	nomad     nomadAPI
 	newSource func(spec string) (Source, humane.Error)
 	dryRun    bool
+	cache     *versionCache
 }
 
-func newUpdater(nomad nomadAPI, dryRun bool) *updater {
+func newUpdater(nomad nomadAPI, dryRun bool, cache *versionCache) *updater {
 	return &updater{
 		nomad:     nomad,
 		newSource: parseSource,
 		dryRun:    dryRun,
+		cache:     cache,
 	}
 }
 
@@ -97,9 +106,20 @@ func (u *updater) check(ctx context.Context, job managedJob) (updated bool, err 
 				Warn("resolving update source failed", humane.Zap(rErr)...)
 			continue
 		}
-		if latest != base[mv.Name] {
-			changes[mv.Name] = latest
+		if latest == base[mv.Name] {
+			continue // already on the latest version
 		}
+		// Break the revert loop: if we already applied this exact version and
+		// the job is no longer on it, Nomad most likely auto-reverted a failed
+		// deployment. Re-pushing it would only fail and revert again.
+		if prev, ok := u.cache.get(job.key(), mv.Name); ok && prev == latest {
+			mChecksSkipped.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "already_applied")))
+			log(ctx).With(zap.String("namespace", job.Namespace), zap.String("job", job.ID)).
+				Info("skipping update: version already applied and reverted",
+					zap.String("variable", mv.Name), zap.String("version", latest))
+			continue
+		}
+		changes[mv.Name] = latest
 	}
 
 	if len(changes) == 0 {
@@ -169,6 +189,9 @@ func (u *updater) check(ctx context.Context, job managedJob) (updated bool, err 
 	mUpdates.Add(ctx, 1)
 	for _, mv := range job.Vars {
 		if latest, ok := changes[mv.Name]; ok {
+			if err := u.cache.set(job.key(), mv.Name, latest); err != nil {
+				log(ctx).Warn("could not persist the applied version to the cache", humane.Zap(err)...)
+			}
 			log(ctx).Info("updated variable",
 				zap.String("namespace", job.Namespace), zap.String("job", job.ID),
 				zap.String("variable", mv.Name), zap.String("value", latest))
