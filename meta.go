@@ -27,7 +27,6 @@ type managedVar struct {
 type managedJob struct {
 	Namespace string
 	ID        string
-	Version   int           // the current job version, used to read its submission
 	Interval  time.Duration // 0 means "use the service default"
 	Vars      []managedVar
 }
@@ -38,11 +37,11 @@ func (j managedJob) key() string { return j.Namespace + "/" + j.ID }
 // parseManagedJob extracts the auto-update configuration from a job's meta
 // block. It returns ok=false when the job declares no auto-updated variables,
 // so callers can ignore jobs that opt out simply by not carrying the meta.
-func parseManagedJob(namespace, id string, version int, meta map[string]string, prefix string) (managedJob, bool, humane.Error) {
+func parseManagedJob(namespace, id string, meta map[string]string, prefix string) (managedJob, bool, humane.Error) {
 	p := prefix + "."
 
 	specs := map[string]string{}
-	job := managedJob{Namespace: namespace, ID: id, Version: version}
+	job := managedJob{Namespace: namespace, ID: id}
 
 	for k, v := range meta {
 		rest, ok := strings.CutPrefix(k, p)

@@ -55,7 +55,7 @@ func TestParseManagedJob(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			job, ok, err := parseManagedJob("default", "example", 3, tc.meta, prefix)
+			job, ok, err := parseManagedJob("default", "example", tc.meta, prefix)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected an error, got none")
@@ -71,8 +71,8 @@ func TestParseManagedJob(t *testing.T) {
 			if !ok {
 				return
 			}
-			if job.Namespace != "default" || job.ID != "example" || job.Version != 3 {
-				t.Fatalf("identity = %s/%s v%d, want default/example v3", job.Namespace, job.ID, job.Version)
+			if job.Namespace != "default" || job.ID != "example" {
+				t.Fatalf("identity = %s/%s, want default/example", job.Namespace, job.ID)
 			}
 			if job.Interval != tc.wantInterval {
 				t.Fatalf("interval = %s, want %s", job.Interval, tc.wantInterval)
@@ -94,7 +94,7 @@ func TestParseManagedJob(t *testing.T) {
 }
 
 func TestParseManagedJobVarsSorted(t *testing.T) {
-	job, ok, err := parseManagedJob("default", "example", 0, map[string]string{
+	job, ok, err := parseManagedJob("default", "example", map[string]string{
 		"autoupdate.zebra": "github:o/z",
 		"autoupdate.alpha": "github:o/a",
 	}, "autoupdate")
