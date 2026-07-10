@@ -1,0 +1,11 @@
+# Binaries
+/nomad-auto-update
+/nomad-auto-update.exe
+/dist/
+
+# Test and coverage output
+*.out
+*.test
+
+# Editor/OS noise
+.DS_Store
