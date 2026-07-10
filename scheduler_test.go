@@ -10,7 +10,7 @@ import (
 var schedEpoch = time.Unix(1_700_000_000, 0)
 
 func newTestScheduler(nomad nomadAPI) *scheduler {
-	s := newScheduler(newUpdater(nomad, false), nomad, 5*time.Minute, time.Hour, 2)
+	s := newScheduler(newUpdater(nomad, false, newVersionCache("")), nomad, 5*time.Minute, time.Hour, 2)
 	s.now = func() time.Time { return schedEpoch }
 	s.splay = func(time.Duration) time.Duration { return 0 }
 	return s

@@ -23,6 +23,16 @@ job "nomad-auto-update" {
   group "auto-update" {
     count = 1
 
+    # Persist the coordinator's applied-version cache across restarts and
+    # reschedules. Without it, a version Nomad auto-reverts after a failed
+    # deployment could be retried on the next start. sticky keeps the alloc's
+    # data on the same client; migrate makes a best-effort move if it relocates.
+    # The coordinator auto-detects ${NOMAD_ALLOC_DIR}/data/applied-versions.json.
+    ephemeral_disk {
+      sticky  = true
+      migrate = true
+    }
+
     restart {
       attempts = 5
       interval = "10m"

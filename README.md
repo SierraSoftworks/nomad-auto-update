@@ -76,6 +76,7 @@ A source spec is `<scheme>:<locator>[?<options>]`.
 | `-interval` | `5m` | How often to rescan Nomad for jobs to manage. |
 | `-default-check-interval` | `1h` | Per-job check interval when a job sets no `autoupdate.interval`. |
 | `-concurrency` | `4` | Maximum number of jobs checked concurrently. |
+| `-cache-file` | `$NOMAD_ALLOC_DIR/data/applied-versions.json` inside a task, else disabled | Where to persist applied-version state across restarts (see Revert protection). |
 | `-once` | off | Run a single discovery and check pass, then exit. |
 | `-dry-run` | off | Log the updates that would be applied without registering any job. |
 | `-version` | off | Print the version and exit. |
@@ -144,6 +145,15 @@ console verbosity.
 - **Private registry authentication is a planned addition.** Docker resolution
   currently uses anonymous pulls (which cover public images on Docker Hub,
   GHCR, and similar). GitHub private repositories work today via `GITHUB_TOKEN`.
+- **Revert protection.** If an update fails to start and Nomad auto-reverts the
+  job, its variables return to their old values while the source still reports
+  the newer version. The coordinator remembers the versions it has applied (per
+  job variable) and will not push a version it already applied a second time —
+  avoiding a revert loop — while still applying any genuinely newer version that
+  appears later. This state is persisted to `-cache-file`; the bundled job
+  points it at a sticky ephemeral disk so it survives restarts and reschedules.
+  With no cache file configured (the default outside a Nomad task) the state is
+  in-memory only, so a restart may retry a reverted version once.
 - **One instance.** The bundled job runs a single coordinator (`count = 1`);
   updates are compare-and-set idempotent.
 
