@@ -167,8 +167,9 @@ func nomadRoute(path string) string {
 	}
 }
 
-// jobListStub is a subset of GET /v1/jobs entries: enough to identify a job,
-// read its meta, and locate the version whose submission to re-render.
+// jobListStub is a subset of GET /v1/jobs entries: enough to identify a job and
+// read its meta. The list endpoint does not report a job's version, so the
+// current version is read separately (see currentVersion) at check time.
 type jobListStub struct {
 	ID        string
 	Namespace string
@@ -193,7 +194,7 @@ func (c *nomadClient) listAutoUpdateJobs(ctx context.Context) ([]managedJob, err
 		if stub.Status == "dead" {
 			continue
 		}
-		job, ok, err := parseManagedJob(stub.Namespace, stub.ID, stub.Version, stub.Meta, c.metaPrefix)
+		job, ok, err := parseManagedJob(stub.Namespace, stub.ID, stub.Meta, c.metaPrefix)
 		if err != nil {
 			log(ctx).With(zap.String("namespace", stub.Namespace), zap.String("job", stub.ID)).
 				Warn("ignoring invalid auto-update config", humane.Zap(err)...)
@@ -215,10 +216,35 @@ type submission struct {
 	Variables     string            `json:"Variables,omitempty"`
 }
 
-// jobSubmission reads the original HCL source and variable values for a
+// currentVersion reports the current (latest) version number of a job. The job
+// list endpoint does not report it, so it is read from the job endpoint.
+func (c *nomadClient) currentVersion(ctx context.Context, namespace, id string) (int, error) {
+	var job struct {
+		Version int
+	}
+	path := "/v1/job/" + url.PathEscape(id)
+	if err := c.doJSON(ctx, http.MethodGet, path, url.Values{"namespace": {namespace}}, nil, &job); err != nil {
+		return 0, err
+	}
+	return job.Version, nil
+}
+
+// jobSubmission reads the original HCL source and variable values for a job's
+// current version, also returning that version number. It returns a nil
+// submission (no error) when Nomad has no source on file for that version.
+func (c *nomadClient) jobSubmission(ctx context.Context, namespace, id string) (*submission, int, error) {
+	version, err := c.currentVersion(ctx, namespace, id)
+	if err != nil {
+		return nil, 0, err
+	}
+	sub, err := c.submissionForVersion(ctx, namespace, id, version)
+	return sub, version, err
+}
+
+// submissionForVersion reads the original HCL source and variable values for a
 // specific job version. It returns a nil submission (no error) when Nomad has
 // no source on file for that version.
-func (c *nomadClient) jobSubmission(ctx context.Context, namespace, id string, version int) (*submission, error) {
+func (c *nomadClient) submissionForVersion(ctx context.Context, namespace, id string, version int) (*submission, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 

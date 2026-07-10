@@ -21,6 +21,7 @@ type fakeNomad struct {
 	jobs        []managedJob
 	listErr     error
 	submissions map[string]*submission
+	version     int
 	active      map[string]bool
 	parsed      json.RawMessage
 	parseErr    error
@@ -41,8 +42,8 @@ func (f *fakeNomad) listAutoUpdateJobs(context.Context) ([]managedJob, error) {
 	return f.jobs, f.listErr
 }
 
-func (f *fakeNomad) jobSubmission(_ context.Context, ns, id string, _ int) (*submission, error) {
-	return f.submissions[ns+"/"+id], nil
+func (f *fakeNomad) jobSubmission(_ context.Context, ns, id string) (*submission, int, error) {
+	return f.submissions[ns+"/"+id], f.version, nil
 }
 
 func (f *fakeNomad) deploymentActive(_ context.Context, ns, id string) (bool, error) {
@@ -97,7 +98,6 @@ func greyManagedJob() managedJob {
 	return managedJob{
 		Namespace: "default",
 		ID:        "grey",
-		Version:   2,
 		Vars:      []managedVar{{Name: "grey_version", Spec: "github:o/grey"}},
 	}
 }

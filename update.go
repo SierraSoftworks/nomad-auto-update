@@ -20,7 +20,7 @@ import (
 // so tests can drive it with an in-memory implementation.
 type nomadAPI interface {
 	listAutoUpdateJobs(ctx context.Context) ([]managedJob, error)
-	jobSubmission(ctx context.Context, namespace, id string, version int) (*submission, error)
+	jobSubmission(ctx context.Context, namespace, id string) (*submission, int, error)
 	deploymentActive(ctx context.Context, namespace, id string) (bool, error)
 	parseJob(ctx context.Context, namespace, hcl, varFile string) (json.RawMessage, error)
 	registerJob(ctx context.Context, namespace, id string, job json.RawMessage, sub *submission) error
@@ -59,7 +59,6 @@ func (u *updater) check(ctx context.Context, job managedJob) (updated bool, err 
 	ctx, span := tracer.Start(ctx, "check", trace.WithAttributes(
 		attribute.String("nomad.namespace", job.Namespace),
 		attribute.String("nomad.job.id", job.ID),
-		attribute.Int("nomad.job.version", job.Version),
 	))
 	defer span.End()
 
@@ -71,18 +70,19 @@ func (u *updater) check(ctx context.Context, job managedJob) (updated bool, err 
 		mCheckDuration.Record(ctx, time.Since(started).Seconds())
 	}()
 
-	sub, subErr := u.nomad.jobSubmission(ctx, job.Namespace, job.ID, job.Version)
+	sub, version, subErr := u.nomad.jobSubmission(ctx, job.Namespace, job.ID)
 	if subErr != nil {
 		outcome = "error"
 		span.RecordError(subErr)
 		span.SetStatus(codes.Error, "submission read failed")
 		return false, subErr
 	}
+	span.SetAttributes(attribute.Int("nomad.job.version", version))
 	if sub == nil || sub.Format != "hcl2" || strings.TrimSpace(sub.Source) == "" {
 		outcome = "skipped"
 		mChecksSkipped.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "no_source")))
 		log(ctx).Warn("cannot auto-update job: source not retained", humane.Zap(humane.New(
-			fmt.Sprintf("no HCL source is retained for %s/%s version %d", job.Namespace, job.ID, job.Version),
+			fmt.Sprintf("no HCL source is retained for %s/%s version %d", job.Namespace, job.ID, version),
 			"Auto-update re-renders the job's HCL, so the source must be retained; do not set meta.nomad_discard_job_source = true on the job.",
 			"Re-register the job once with its source retained (the default) so its variables can be updated.",
 		))...)
