@@ -118,6 +118,22 @@ with the new variables (`/v1/jobs/parse`), and `submit-job` for registering the
 new version. Without `parse-job`, discovery works but updates fail with a 403 at
 the parse step on Nomad versions that require it.
 
+If any managed job **mounts a host volume**, the coordinator also needs a
+`host_volume` block — Nomad checks volume mount permissions when registering the
+job, and those are *not* covered by namespace capabilities. Without it, reads and
+parsing succeed but registration fails with a 403 on `POST /v1/job/:id`:
+
+```hcl
+# Add for jobs that mount host volumes (scope the name down if you prefer).
+host_volume "*" {
+  capabilities = ["mount-readwrite"]
+}
+```
+
+Use `mount-readonly` instead if every mount is read-only. For jobs that mount CSI
+volumes, grant `csi-mount-volume` in the `namespace` block plus a `plugin { policy = "read" }` rule.
+
+
 ```sh
 nomad acl policy apply \
   -namespace default -job nomad-auto-update \

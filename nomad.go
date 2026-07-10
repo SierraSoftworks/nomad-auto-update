@@ -162,7 +162,7 @@ func requiredCapabilityHint(method, path string) string {
 	case path == "/v1/jobs/parse":
 		return "Re-rendering the HCL (POST /v1/jobs/parse) needs the parse-job capability (or submit-job) on the job's namespace."
 	default:
-		return fmt.Sprintf("Registering the updated job (%s %s) needs the submit-job capability on the job's namespace.", method, path)
+		return fmt.Sprintf("Registering the updated job (%s %s) needs the submit-job capability on the job's namespace; if the job mounts a host volume it also needs a host_volume policy block granting mount-readwrite (CSI volumes need csi-mount-volume plus plugin read).", method, path)
 	}
 }
 
