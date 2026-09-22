@@ -139,6 +139,39 @@ func TestRescheduleDropsRemovedJob(t *testing.T) {
 	}
 }
 
+func TestTriggerAllDispatchesEveryJobNow(t *testing.T) {
+	nomad := &fakeNomad{jobs: []managedJob{
+		{Namespace: "default", ID: "a"},
+		{Namespace: "default", ID: "b"},
+	}}
+	s := newTestScheduler(nomad)
+	s.splay = func(d time.Duration) time.Duration { return d }
+	s.discover(context.Background())
+
+	// b is already running; c appears only at trigger time.
+	s.queue.remove("default/b")
+	s.inflight["default/b"] = true
+	nomad.jobs = append(nomad.jobs, managedJob{Namespace: "default", ID: "c"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.triggerAll(ctx)
+
+	if s.queue.Len() != 0 {
+		t.Fatalf("queue = %d, want every check dispatched", s.queue.Len())
+	}
+	for _, key := range []string{"default/a", "default/b", "default/c"} {
+		if !s.inflight[key] {
+			t.Errorf("%s should be in flight", key)
+		}
+	}
+
+	got := map[string]bool{<-s.results: true, <-s.results: true}
+	if !got["default/a"] || !got["default/c"] {
+		t.Fatalf("completed checks = %v, want a and c", got)
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

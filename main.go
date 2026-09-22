@@ -102,7 +102,12 @@ func run() int {
 		return 0
 	}
 
-	sched.run(ctx)
+	// SIGHUP triggers an immediate check of every managed job.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+
+	sched.run(ctx, hup)
 	log(context.Background()).Info("shutting down")
 	return 0
 }

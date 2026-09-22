@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"context"
 	"math/rand/v2"
+	"os"
 	"sort"
 	"time"
 
@@ -108,8 +109,9 @@ func defaultSplay(interval time.Duration) time.Duration {
 	return time.Duration(rand.Int64N(int64(interval)))
 }
 
-// run drives the scheduler until ctx is cancelled.
-func (s *scheduler) run(ctx context.Context) {
+// run drives the scheduler until ctx is cancelled. Each receive on trigger
+// (e.g. SIGHUP) rediscovers jobs and checks every managed job immediately.
+func (s *scheduler) run(ctx context.Context, trigger <-chan os.Signal) {
 	s.discover(ctx)
 	discoverCh := s.after(s.discoverEvery)
 
@@ -120,6 +122,10 @@ func (s *scheduler) run(ctx context.Context) {
 			return
 		case <-discoverCh:
 			s.discover(ctx)
+			discoverCh = s.after(s.discoverEvery)
+		case sig := <-trigger:
+			log(ctx).Info("on-demand check requested", zap.Stringer("signal", sig))
+			s.triggerAll(ctx)
 			discoverCh = s.after(s.discoverEvery)
 		case key := <-s.results:
 			s.reschedule(key)
@@ -151,6 +157,19 @@ func (s *scheduler) runOnce(ctx context.Context) {
 		}
 		cancel()
 	}
+}
+
+// triggerAll refreshes the managed set and makes every queued check due now,
+// then dispatches them. Checks already in flight are left to finish and are
+// rescheduled as usual.
+func (s *scheduler) triggerAll(ctx context.Context) {
+	s.discover(ctx)
+	now := s.now()
+	for _, it := range *s.queue {
+		it.due = now
+	}
+	heap.Init(s.queue)
+	s.runDue(ctx)
 }
 
 // timeUntilNext reports how long to wait before the earliest queued check is
