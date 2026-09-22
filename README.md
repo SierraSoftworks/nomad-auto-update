@@ -81,6 +81,9 @@ A source spec is `<scheme>:<locator>[?<options>]`.
 | `-dry-run` | off | Log the updates that would be applied without registering any job. |
 | `-version` | off | Print the version and exit. |
 
+Send `SIGHUP` to trigger an immediate rediscovery and check of every managed
+job without waiting for their intervals (e.g. `nomad alloc signal -s SIGHUP <alloc>`).
+
 `$NOMAD_TOKEN` is used when set; inside a Nomad task the workload identity token
 is provided automatically via the task API socket.
 
