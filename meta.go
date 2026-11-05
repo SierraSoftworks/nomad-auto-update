@@ -29,6 +29,10 @@ type managedJob struct {
 	ID        string
 	Interval  time.Duration // 0 means "use the service default"
 	Vars      []managedVar
+	// Meta is the live job's meta. Keys the job's source does not set (such
+	// as ownership stamps written by the tool that registered it) are carried
+	// onto each re-rendered version.
+	Meta map[string]string
 }
 
 // key uniquely identifies a job across namespaces.
@@ -41,7 +45,7 @@ func parseManagedJob(namespace, id string, meta map[string]string, prefix string
 	p := prefix + "."
 
 	specs := map[string]string{}
-	job := managedJob{Namespace: namespace, ID: id}
+	job := managedJob{Namespace: namespace, ID: id, Meta: meta}
 
 	for k, v := range meta {
 		rest, ok := strings.CutPrefix(k, p)

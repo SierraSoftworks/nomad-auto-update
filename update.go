@@ -177,6 +177,11 @@ func (u *updater) check(ctx context.Context, job managedJob) (updated bool, err 
 		span.RecordError(parseErr)
 		return false, parseErr
 	}
+	if rendered, parseErr = carryMeta(rendered, job.Meta); parseErr != nil {
+		outcome = "error"
+		span.RecordError(parseErr)
+		return false, parseErr
+	}
 
 	newSub := &submission{Format: "hcl2", Source: sub.Source, VariableFlags: merged}
 	if regErr := u.nomad.registerJob(ctx, job.Namespace, job.ID, rendered, newSub); regErr != nil {
@@ -228,4 +233,43 @@ func (u *updater) resolve(ctx context.Context, mv managedVar) (string, error) {
 	}
 	span.SetAttributes(attribute.String("autoupdate.resolved", latest))
 	return latest, nil
+}
+
+// carryMeta adds the live job's meta keys that the re-rendered job lacks.
+// Tools which register a job from its HCL can add meta on top of the source
+// (Buckle stamps its ownership this way), and re-rendering the source alone
+// would drop those keys and orphan the job. Keys the source sets keep their
+// re-rendered values, so meta interpolated from updated variables changes.
+func carryMeta(job json.RawMessage, live map[string]string) (json.RawMessage, error) {
+	if len(live) == 0 {
+		return job, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(job, &fields); err != nil {
+		return nil, humane.Wrap(err, "could not read the re-rendered job to carry its meta forward",
+			"This is likely a bug in nomad-auto-update; please report it.")
+	}
+	meta := map[string]string{}
+	if raw, ok := fields["Meta"]; ok && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &meta); err != nil {
+			return nil, humane.Wrap(err, "could not read the re-rendered job's meta",
+				"This is likely a bug in nomad-auto-update; please report it.")
+		}
+	}
+	added := false
+	for k, v := range live {
+		if _, ok := meta[k]; !ok {
+			meta[k] = v
+			added = true
+		}
+	}
+	if !added {
+		return job, nil
+	}
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		return nil, err
+	}
+	fields["Meta"] = raw
+	return json.Marshal(fields)
 }
