@@ -337,3 +337,61 @@ type mutableSource struct{ value *string }
 
 func (m mutableSource) Latest(context.Context) (string, error) { return *m.value, nil }
 func (m mutableSource) scheme() string                         { return "fake" }
+
+func TestCarryMeta(t *testing.T) {
+	cases := []struct {
+		name     string
+		job      string
+		live     map[string]string
+		expected map[string]string
+	}{
+		{"no live meta", `{"ID":"grey"}`, nil, nil},
+		{"adds missing keys", `{"ID":"grey"}`, map[string]string{"buckle.module": "grey"}, map[string]string{"buckle.module": "grey"}},
+		{"source wins on shared keys", `{"ID":"grey","Meta":{"version":"v2"}}`, map[string]string{"version": "v1", "buckle.module": "grey"}, map[string]string{"version": "v2", "buckle.module": "grey"}},
+		{"null meta", `{"ID":"grey","Meta":null}`, map[string]string{"owner": "x"}, map[string]string{"owner": "x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := carryMeta(json.RawMessage(tc.job), tc.live)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				ID   string
+				Meta map[string]string
+			}
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.ID != "grey" {
+				t.Errorf("job fields lost: %s", out)
+			}
+			for k, v := range tc.expected {
+				if got.Meta[k] != v {
+					t.Errorf("Meta[%q] = %q, want %q", k, got.Meta[k], v)
+				}
+			}
+		})
+	}
+}
+
+func TestUpdaterKeepsLiveMetaTheSourceLacks(t *testing.T) {
+	nomad := greyJob("v2.1.0")
+	u := greyUpdater(nomad)
+	job := greyManagedJob()
+	job.Meta = map[string]string{"buckle.target": "nomad", "buckle.module": "grey"}
+
+	if _, err := u.check(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	if len(nomad.registered) != 1 {
+		t.Fatalf("expected one registration, got %d", len(nomad.registered))
+	}
+	var got struct{ Meta map[string]string }
+	if err := json.Unmarshal(nomad.registered[0].job, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Meta["buckle.module"] != "grey" || got.Meta["buckle.target"] != "nomad" {
+		t.Errorf("ownership meta was dropped: %v", got.Meta)
+	}
+}
