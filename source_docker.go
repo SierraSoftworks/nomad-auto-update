@@ -66,7 +66,14 @@ func parseDockerRef(ref string) (registry, repo, tag string) {
 
 	first, rest, hasSlash := strings.Cut(ref, "/")
 	if hasSlash && (strings.ContainsAny(first, ".:") || first == "localhost") {
-		return first, rest, tag
+		if !isDockerHubHost(first) {
+			return first, rest, tag
+		}
+		// docker.io/... is Docker Hub's canonical name, but docker.io itself
+		// does not serve the registry API (it redirects to the Hub website), so
+		// route it to the registry endpoint like an unqualified reference.
+		ref = rest
+		first, _, hasSlash = strings.Cut(ref, "/")
 	}
 
 	// No registry host: Docker Hub. Single-segment names live under library/.
@@ -74,6 +81,15 @@ func parseDockerRef(ref string) (registry, repo, tag string) {
 		return "registry-1.docker.io", "library/" + ref, tag
 	}
 	return "registry-1.docker.io", ref, tag
+}
+
+// isDockerHubHost reports whether host is one of Docker Hub's public aliases.
+func isDockerHubHost(host string) bool {
+	switch host {
+	case "docker.io", "index.docker.io", "registry-1.docker.io":
+		return true
+	}
+	return false
 }
 
 // Latest resolves the tag to its digest and returns "<tag>@<digest>".
